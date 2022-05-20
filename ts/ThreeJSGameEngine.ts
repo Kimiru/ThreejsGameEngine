@@ -1,9 +1,12 @@
+import { Console } from 'console'
 import * as THREE from 'three'
+import { Mesh } from 'three'
 
 const gameEngineConstructorArguments = {
     width: innerWidth,
     height: innerHeight,
-    physicallyCorrectLights: false
+    physicallyCorrectLights: false,
+    shadowMapEnabled: false
 }
 
 class GameEngine {
@@ -27,6 +30,7 @@ class GameEngine {
         args = { ...gameEngineConstructorArguments, ...args }
 
         this.renderer.physicallyCorrectLights = args.physicallyCorrectLights
+        this.renderer.shadowMap.enabled = args.shadowMapEnabled
 
         this.canvas.style.position = 'absolute'
         this.canvas.style.top = '0'
@@ -66,7 +70,16 @@ class GameEngine {
         this.canvas.style.width = width + 'px'
         this.canvas.style.height = height + 'px'
 
-        //TODO Scene's Camera aspect ratio
+        if (this.#currentScene) {
+
+            this.#currentScene.rendererWidth = width
+            this.#currentScene.rendererHeight = height
+
+            this.#currentScene.onResize(width, height)
+            this.#currentScene.updateCameraAspect()
+
+        }
+
     }
 
     /**
@@ -82,7 +95,7 @@ class GameEngine {
 
     setScene(scene: GameScene): void {
 
-        this.#currentScene = scene
+        this.#nextScene = scene
 
     }
 
@@ -90,10 +103,16 @@ class GameEngine {
 
         if (this.#nextScene !== undefined) {
 
+            if (this.#currentScene)
+                this.#currentScene.onUnSet()
+
             this.#currentScene = this.#nextScene
             this.#nextScene = undefined
 
             this.resize(this.#width, this.#height)
+
+            if (this.#currentScene)
+                this.#currentScene.onSet()
 
         }
 
@@ -119,6 +138,7 @@ class GameEngine {
         let time: number = Date.now();
         this.#dt = (time - this.#lastTime) / 1000;
         this.#lastTime = time;
+        this.#dt = Math.min(this.#dt, 0.2)
 
         if (this.#currentScene) {
 
@@ -139,7 +159,9 @@ class GameEngine {
 class GameScene extends THREE.Scene {
 
     camera: THREE.Camera = null
-    children: GameObject[] = []
+    rendererWidth: number = 0
+    rendererHeight: number = 0
+    tags: Map<string, GameObject[]> = new Map()
 
     constructor() {
 
@@ -149,31 +171,41 @@ class GameScene extends THREE.Scene {
 
     update(dt: number) {
 
-        for (let child of this.children) {
-            child.update(dt)
-        }
+        if (this.onUpdate(dt))
+            for (let child of reverseIterator(this.children))
+                if (child instanceof GameObject)
+                    child.update(dt)
 
     }
 
     render(renderer: THREE.WebGLRenderer, ctx: CanvasRenderingContext2D) {
 
-        if (this.camera !== null) {
+        if (this.camera !== null)
+            if (this.onRender(ctx)) {
 
-            renderer.render(this, this.camera)
+                renderer.render(this, this.camera)
 
-            for (let child of this.children) {
-                child.render(ctx)
+                for (let child of this.children)
+                    if (child instanceof GameObject)
+                        child.render(ctx)
+
             }
-
-        }
-
-
 
     }
 
     add(...object: GameObject[]): this {
 
         super.add(...object)
+
+        for (let obj of object)
+            if (obj instanceof GameObject)
+                for (let tag of obj.tags) {
+
+                    if (!this.tags.has(tag)) this.tags.set(tag, [])
+
+                    this.tags.get(tag).push(obj)
+
+                }
 
         return this
     }
@@ -182,7 +214,68 @@ class GameScene extends THREE.Scene {
 
         super.add(...object)
 
+        for (let obj of object)
+            if (obj instanceof GameObject)
+                for (let tag of obj.tags) {
+
+                    let list = this.tags.get(tag)
+
+                    list.splice(list.indexOf(obj), 1)
+
+                }
+
         return this
+
+    }
+
+    getTags(tag: string): GameObject[] {
+
+        return this.tags.get(tag) ?? []
+
+    }
+
+    onSet(): void {
+
+    }
+
+    onUnSet(): void {
+
+    }
+
+    onResize(width: number, height: number): void {
+
+    }
+
+    updateCameraAspect(): void {
+
+        if (this.camera instanceof THREE.PerspectiveCamera) {
+
+            this.camera.aspect = this.rendererWidth / this.rendererHeight
+            this.camera.updateProjectionMatrix()
+
+        }
+
+    }
+
+    /**
+    * 
+    * @param {number} dt 
+    * @returns 
+    */
+    onUpdate(dt: number): boolean {
+
+        return true
+
+    }
+
+    /**
+     * 
+     * @param {CanvasRenderingContext2D} ctx 
+     * @returns 
+     */
+    onRender(ctx: CanvasRenderingContext2D): boolean {
+
+        return true
 
     }
 
@@ -191,6 +284,7 @@ class GameScene extends THREE.Scene {
 class GameObject extends THREE.Object3D {
 
     children: GameObject[] = []
+    tags: string[] = []
 
     constructor() {
 
@@ -230,9 +324,9 @@ class GameObject extends THREE.Object3D {
     update(dt: number) {
 
         if (this.onUpdate(dt))
-            for (let child of this.children) {
-                child.update(dt)
-            }
+            for (let child of reverseIterator(this.children))
+                if (child instanceof GameObject)
+                    child.update(dt)
 
     }
 
@@ -242,10 +336,10 @@ class GameObject extends THREE.Object3D {
      */
     render(ctx: CanvasRenderingContext2D) {
 
-        if (this.onDraw(ctx))
-            for (let child of this.children) {
-                child.render(ctx)
-            }
+        if (this.onRender(ctx))
+            for (let child of this.children)
+                if (child instanceof GameObject)
+                    child.render(ctx)
 
     }
 
@@ -265,7 +359,7 @@ class GameObject extends THREE.Object3D {
      * @param {CanvasRenderingContext2D} ctx 
      * @returns 
      */
-    onDraw(ctx: CanvasRenderingContext2D): boolean {
+    onRender(ctx: CanvasRenderingContext2D): boolean {
 
         return true
 
@@ -325,4 +419,97 @@ class Timer {
 
 }
 
-export { GameEngine, GameScene, GameObject, Timer }
+class Input {
+
+    keysDown: Set<string> = new Set()
+    keysOnce: Set<string> = new Set()
+
+    constructor() {
+
+        window.addEventListener('keydown', (evt) => {
+
+            this.keysDown.add(evt.code)
+            this.keysOnce.add(evt.code)
+
+        })
+
+        window.addEventListener('keyup', (evt) => {
+
+            this.keysDown.delete(evt.code)
+            this.keysOnce.delete(evt.code)
+
+        })
+
+    }
+
+    isDown(code: string): boolean { return this.keysDown.has(code) }
+
+    isPressed(code: string): boolean {
+
+        if (this.keysOnce.has(code)) {
+
+            this.keysOnce.delete(code)
+
+            return true
+
+        }
+
+        return false
+
+    }
+
+}
+
+class FPSCounter extends GameObject {
+
+    timer = new Timer()
+    frameCount = 0
+    fps = 0
+
+    onUpdate(dt) {
+
+        this.frameCount++
+
+        if (this.timer.greaterThan(1000)) {
+
+            this.fps = this.frameCount
+            this.frameCount = 0
+            this.timer.reset()
+
+        }
+
+        return true
+
+    }
+
+    /**
+     * 
+     * @param {CanvasRenderingContext2D} ctx 
+     */
+    onRender(ctx: CanvasRenderingContext2D) {
+
+        ctx.save()
+
+        ctx.scale(2, 2)
+
+        ctx.fillStyle = 'red'
+        ctx.textBaseline = 'top'
+        ctx.fillText(this.fps.toString(), 5, 5)
+
+        ctx.restore()
+
+        return true
+
+    }
+
+}
+
+function* reverseIterator(list: any[]) {
+
+    for (let index = list.length - 1; index >= 0; index--)
+        yield list[index]
+
+}
+
+
+export { GameEngine, GameScene, GameObject, Timer, FPSCounter }
