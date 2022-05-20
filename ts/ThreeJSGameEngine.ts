@@ -512,4 +512,4 @@ function* reverseIterator(list: any[]) {
 }
 
 
-export { GameEngine, GameScene, GameObject, Timer, FPSCounter }
+export { GameEngine, GameScene, GameObject, Timer, FPSCounter, Input }
