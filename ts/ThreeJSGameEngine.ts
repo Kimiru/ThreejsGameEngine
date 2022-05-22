@@ -1,6 +1,4 @@
-import { Console } from 'console'
 import * as THREE from 'three'
-import { Mesh } from 'three'
 
 const gameEngineConstructorArguments = {
     width: innerWidth,
@@ -198,7 +196,13 @@ class GameScene extends THREE.Scene {
         super.add(...object)
 
         for (let obj of object)
-            if (obj instanceof GameObject)
+            if (obj instanceof Prefab) {
+                for (let child of reverseIterator(obj.children)) {
+                    obj.remove(child)
+                    this.add(child)
+                }
+            }
+            else if (obj instanceof GameObject)
                 for (let tag of obj.tags) {
 
                     if (!this.tags.has(tag)) this.tags.set(tag, [])
@@ -367,6 +371,16 @@ class GameObject extends THREE.Object3D {
 
 }
 
+class Prefab extends GameObject {
+
+    constructor() {
+
+        super()
+
+    }
+
+}
+
 class Timer {
 
     begin: number
@@ -512,4 +526,372 @@ function* reverseIterator(list: any[]) {
 }
 
 
-export { GameEngine, GameScene, GameObject, Timer, FPSCounter, Input }
+
+
+class CubicBezierCurve<T extends THREE.Vector> {
+
+    v1: T
+    v2: T
+    v3: T
+    v4: T
+
+    constructor(v1: T, v2: T, v3: T, v4: T) {
+
+        this.v1 = v1
+        this.v2 = v2
+        this.v3 = v3
+        this.v4 = v4
+
+    }
+
+    get(t: number): T {
+
+        let tv1 = this.v1.clone().multiplyScalar((1 - t) ** 3) as T
+        let tv2 = this.v2.clone().multiplyScalar(3 * (1 - t) ** 2 * t) as T
+        let tv3 = this.v3.clone().multiplyScalar(3 * (1 - t) * t ** 2) as T
+        let tv4 = this.v4.clone().multiplyScalar(t ** 3) as T
+
+        return tv1.add(tv2).add(tv3).add(tv4)
+
+    }
+
+    getTangent(t: number): T {
+
+        let tmp1 = this.v2.clone().sub(this.v1).multiplyScalar(3 * (1 - t) ** 2)
+        let tmp2 = this.v3.clone().sub(this.v2).multiplyScalar(6 * (1 - t) * t)
+        let tmp3 = this.v4.clone().sub(this.v3).multiplyScalar(3 * t ** 2)
+
+        return tmp1.add(tmp2).add(tmp3) as T
+
+    }
+
+    *generator(steps: number): IterableIterator<[T, T]> {
+
+        for (let index = 0; index <= steps; index++) {
+
+            let t = index / steps
+
+            yield [this.get(t), this.getTangent(t)]
+
+        }
+
+    }
+
+    meshs(radius: number = 1): THREE.Mesh[] {
+
+        let meshs: THREE.Mesh[] = []
+
+        if (this.v1 instanceof THREE.Vector3 &&
+            this.v2 instanceof THREE.Vector3 &&
+            this.v3 instanceof THREE.Vector3 &&
+            this.v4 instanceof THREE.Vector3) {
+
+            let geo = new THREE.SphereBufferGeometry(radius, 8, 8)
+            let mat = new THREE.MeshBasicMaterial({ color: '#f00' })
+
+            let m1 = new THREE.Mesh(geo, mat)
+            let m2 = new THREE.Mesh(geo, mat)
+            let m3 = new THREE.Mesh(geo, mat)
+            let m4 = new THREE.Mesh(geo, mat)
+
+            m1.position.copy(this.v1)
+            m2.position.copy(this.v2)
+            m3.position.copy(this.v3)
+            m4.position.copy(this.v4)
+
+            meshs = [m1, m2, m3, m4]
+        }
+
+        return meshs
+
+    }
+
+
+}
+
+class Utils {
+
+    static Pivot = class Pivot {
+
+        position: THREE.Vector3
+        rotation: THREE.Quaternion
+
+        constructor(position: THREE.Vector3, rotation: THREE.Quaternion) {
+
+            this.position = position
+            this.rotation = rotation
+
+        }
+
+        rotate(point: THREE.Vector3): THREE.Vector3 {
+
+            return point.clone().applyQuaternion(this.rotation).add(this.position)
+
+        }
+
+    }
+
+    static lookRotation(lookAt: THREE.Vector3, up: THREE.Vector3): THREE.Quaternion {
+
+        let forward = lookAt.clone().normalize()
+        let upward = up.clone().normalize()
+        let right = upward.clone().cross(forward).normalize()
+
+        let m00 = right.x
+        let m01 = upward.x
+        let m02 = forward.x
+        let m10 = right.y
+        let m11 = upward.y
+        let m12 = forward.y
+        let m20 = right.z
+        let m21 = upward.z
+        let m22 = forward.z
+
+        let tr = m00 + m11 + m22
+        let qw, qx, qy, qz
+
+        if (tr > 0) {
+            let S = Math.sqrt(tr + 1.0) * 2; // S=4*qw 
+            qw = 0.25 * S;
+            qx = (m21 - m12) / S;
+            qy = (m02 - m20) / S;
+            qz = (m10 - m01) / S;
+        } else if ((m00 > m11) && (m00 > m22)) {
+            let S = Math.sqrt(1.0 + m00 - m11 - m22) * 2; // S=4*qx 
+            qw = (m21 - m12) / S;
+            qx = 0.25 * S;
+            qy = (m01 + m10) / S;
+            qz = (m02 + m20) / S;
+        } else if (m11 > m22) {
+            let S = Math.sqrt(1.0 + m11 - m00 - m22) * 2; // S=4*qy
+            qw = (m02 - m20) / S;
+            qx = (m01 + m10) / S;
+            qy = 0.25 * S;
+            qz = (m12 + m21) / S;
+        } else {
+            let S = Math.sqrt(1.0 + m22 - m00 - m11) * 2; // S=4*qz
+            qw = (m10 - m01) / S;
+            qx = (m02 + m20) / S;
+            qy = (m12 + m21) / S;
+            qz = 0.25 * S;
+        }
+        let ret = new THREE.Quaternion(qx, qy, qz, qw);
+
+        return ret
+
+    }
+
+    static *arcGenerator(steps: number, angle: number, position: THREE.Vector3, scale) {
+
+        for (let index = 0; index <= steps; index++) {
+
+            let t = index / steps
+            let a = angle * t
+
+            console.log(t, a)
+
+            yield [
+                new THREE.Vector3(
+                    Math.cos(a),
+                    0,
+                    Math.sin(a)
+                )
+                    .multiplyScalar(scale)
+                    .add(position),
+                new THREE.Vector3(
+                    -Math.sin(a),
+                    0,
+                    Math.cos(a)
+                )
+            ]
+
+        }
+
+    }
+
+    static extrude<T extends THREE.Vector3>(shape: THREE.Shape, pathIterator: IterableIterator<[T, T]>, up: T) {
+
+        let geometry = new THREE.BufferGeometry()
+
+        let shapePoints = shape.getPoints()
+
+        let vertices: THREE.Vector3[] = []
+        let geo_vertices: number[] = []
+        let index = 0
+
+        for (let step of pathIterator) {
+
+            let upward = step[1].clone().cross(up).cross(step[1]).normalize()
+            let quaternion = Utils.lookRotation(step[1], upward)
+
+            let pivot = new Utils.Pivot(step[0], quaternion)
+
+
+            for (let point of shapePoints) {
+
+                let vec3 = new THREE.Vector3(point.x, point.y, 0)
+
+                vertices.push(pivot.rotate(vec3))
+
+            }
+
+            if (index != 0) {
+
+                for (let shapeIndex = 0; shapeIndex < shapePoints.length - 1; shapeIndex++) {
+
+                    let a = vertices[(index - 1) * shapePoints.length + shapeIndex]
+                    let b = vertices[(index - 1) * shapePoints.length + shapeIndex + 1]
+                    let c = vertices[index * shapePoints.length + shapeIndex + 1]
+                    let d = vertices[index * shapePoints.length + shapeIndex]
+
+                    geo_vertices.push(a.x, a.y, a.z)
+                    geo_vertices.push(c.x, c.y, c.z)
+                    geo_vertices.push(b.x, b.y, b.z)
+                    geo_vertices.push(a.x, a.y, a.z)
+                    geo_vertices.push(d.x, d.y, d.z)
+                    geo_vertices.push(c.x, c.y, c.z)
+                }
+
+                shapePoints.length
+
+            }
+
+            index++
+
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(geo_vertices), 3))
+
+        geometry.computeVertexNormals()
+
+        return geometry
+
+    }
+
+}
+
+class Graph {
+
+    nodes: Set<number> = new Set()
+    links: Map<number, Map<number, any>> = new Map()
+
+    constructor() {
+
+    }
+
+    /**
+     * 
+     * @param {...number} nodes 
+     */
+    addNode(...nodes: number[]) {
+
+        for (let node of nodes) {
+
+            if (!this.nodes.has(node)) {
+
+                this.nodes.add(node)
+                this.links.set(node, new Map())
+
+            }
+
+        }
+
+    }
+
+    /**
+     * 
+     * @param {...number} nodes 
+     */
+    removeNode(...nodes: number[]) {
+
+        for (let node of nodes)
+            if (this.hasNode(node)) {
+
+                this.nodes.delete(node)
+
+                this.links.delete(node)
+
+                for (let [_, map] of this.links)
+                    map.delete(node)
+
+            }
+
+    }
+
+    /**
+     * 
+     * @param {number} node 
+     * @returns {boolean}
+     */
+    hasNode(node: number) { return this.nodes.has(node) }
+
+    /**
+     * 
+     * @param {...{source:number, target:number, data:any}} links 
+     */
+    addLink(...links: { source: number, target: number, data: any }[]) {
+
+        for (let link of links) {
+
+            this.addNode(link.source, link.target)
+
+            this.links.get(link.source).set(link.target, link.data)
+
+        }
+
+    }
+
+    /**
+     * 
+     * @param {...{source:number, target:number}} links 
+     */
+    removeLink(...links: { source: number, target: number }[]) {
+
+        for (let link of links)
+            if (this.hasLink(link.source, link.target)) {
+
+                this.links.get(link.source).delete(link.target)
+
+            }
+
+    }
+
+    hasLink(source: number, target: number) { return this.links.has(source) && this.links.get(source).has(target) }
+
+    isConnected(node: number) {
+
+        if (!this.hasNode(node)) return true
+
+        let nodeSet: Set<number>
+        let currentSet: Set<number> = new Set([node])
+
+        do {
+
+            nodeSet = currentSet
+            currentSet = new Set(nodeSet)
+
+            for (let node of nodeSet)
+                for (let target of this.links.get(node).keys())
+                    currentSet.add(target)
+
+        } while (nodeSet.size != currentSet.size)
+
+        return nodeSet.size == this.nodes.size
+
+    }
+
+    isFullyConnected() {
+
+        for (let node of this.nodes)
+            if (!this.isConnected(node)) return false
+
+        return true
+
+    }
+
+}
+
+
+
+
+export { GameEngine, GameScene, GameObject, Timer, FPSCounter, Input, CubicBezierCurve, Utils, Graph }
