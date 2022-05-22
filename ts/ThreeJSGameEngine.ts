@@ -195,31 +195,25 @@ class GameScene extends THREE.Scene {
 
         super.add(...object)
 
-        for (let obj of object)
-            if (obj instanceof Prefab) {
-                for (let child of reverseIterator(obj.children)) {
-                    obj.remove(child)
-                    this.add(child)
-                }
+        for (let obj of object) if (obj instanceof GameObject)
+            for (let tag of obj.tags) {
+
+                if (!this.tags.has(tag)) this.tags.set(tag, [])
+
+                this.tags.get(tag).push(obj)
+
             }
-            else if (obj instanceof GameObject)
-                for (let tag of obj.tags) {
-
-                    if (!this.tags.has(tag)) this.tags.set(tag, [])
-
-                    this.tags.get(tag).push(obj)
-
-                }
 
         return this
     }
 
     remove(...object: GameObject[]): this {
 
-        super.add(...object)
+        super.remove(...object)
 
         for (let obj of object)
-            if (obj instanceof GameObject)
+            if (obj instanceof GameObject) {
+
                 for (let tag of obj.tags) {
 
                     let list = this.tags.get(tag)
@@ -227,6 +221,7 @@ class GameScene extends THREE.Scene {
                     list.splice(list.indexOf(obj), 1)
 
                 }
+            }
 
         return this
 
@@ -315,7 +310,7 @@ class GameObject extends THREE.Object3D {
      */
     remove(...object: GameObject[]): this {
 
-        super.add(...object)
+        super.remove(...object)
 
         return this
 
@@ -366,16 +361,6 @@ class GameObject extends THREE.Object3D {
     onRender(ctx: CanvasRenderingContext2D): boolean {
 
         return true
-
-    }
-
-}
-
-class Prefab extends GameObject {
-
-    constructor() {
-
-        super()
 
     }
 
@@ -688,8 +673,6 @@ class Utils {
             let t = index / steps
             let a = angle * t
 
-            console.log(t, a)
-
             yield [
                 new THREE.Vector3(
                     Math.cos(a),
@@ -858,7 +841,29 @@ class Graph {
 
     hasLink(source: number, target: number) { return this.links.has(source) && this.links.get(source).has(target) }
 
-    isConnected(node: number) {
+    isConnectedTo(source: number, target: number): boolean {
+
+        if (!this.hasNode(source)) return false
+        if (!this.hasNode(target)) return false
+
+        let nodeSet: Set<number>
+        let currentSet: Set<number> = new Set([source])
+
+        do {
+
+            nodeSet = currentSet
+            currentSet = new Set(nodeSet)
+
+            for (let node of nodeSet)
+                for (let target of this.links.get(node).keys())
+                    currentSet.add(target)
+
+        } while (nodeSet.size != currentSet.size)
+
+        return nodeSet.has(target)
+    }
+
+    isConnected(node: number): boolean {
 
         if (!this.hasNode(node)) return true
 
@@ -880,7 +885,7 @@ class Graph {
 
     }
 
-    isFullyConnected() {
+    isFullyConnected(): boolean {
 
         for (let node of this.nodes)
             if (!this.isConnected(node)) return false
